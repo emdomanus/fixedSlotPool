@@ -14,11 +14,11 @@ local pool: FixedSlotPool.FixedSlotPool<Record> = FixedSlotPool.new(4, {
 })
 
 pool.values[1].amount = 5
-local index, generation, record = pool:tryAcquire()
-if index and generation and record then
+local record, generation = pool:tryAcquire()
+if record ~= nil and generation ~= nil then
 	record.target = "example"
-	assert(pool:isAcquired(index, generation), "expected pool:isAcquired(index, generation)")
-	assert(pool:release(index, generation), "expected pool:release(index, generation)")
+	assert(pool:isAcquired(record, generation), "expected pool:isAcquired(record, generation)")
+	assert(pool:release(record, generation), "expected pool:release(record, generation)")
 end
 local numberPool: FixedSlotPool.FixedSlotPool<number> = FixedSlotPool.new(2, {
 	create = function(slotIndex: number): number

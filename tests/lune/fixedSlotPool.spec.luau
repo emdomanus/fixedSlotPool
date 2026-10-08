@@ -37,12 +37,12 @@ test("preallocates distinct stable payloads and freezes only the values array", 
 	rejects(function()
 		pool.values[1] = { amount = 8 }
 	end)
-	local index, generation, record = pool:tryAcquire()
+	local record, generation = pool:tryAcquire()
 	assert(
-		index == 1 and generation == 1 and record == pool.values[1] and record.amount == 7,
-		"expected index == 1 and generation == 1 and record == pool.values[1] and record.amount == 7"
+		generation == 1 and record == pool.values[1] and record.amount == 7,
+		"expected generation == 1 and record == pool.values[1] and record.amount == 7"
 	)
-	assert(pool:release(index, generation), "expected pool:release(index, generation)")
+	assert(pool:release(record, generation), "expected pool:release(record, generation)")
 	assert(created == 64, "expected created == 64")
 end)
 
@@ -55,18 +55,12 @@ test("full capacity returns nil without resizing or stealing", function()
 		end,
 	})
 	for expected = 1, 3 do
-		local index, generation, value = pool:tryAcquire()
-		assert(
-			index == expected and generation == 1 and value == expected,
-			"expected index == expected and generation == 1 and value == expected"
-		)
+		local value, generation = pool:tryAcquire()
+		assert(generation == 1 and value == expected, "expected generation == 1 and value == expected")
 	end
 	for _ = 1, 20 do
-		local index, generation, value = pool:tryAcquire()
-		assert(
-			index == nil and generation == nil and value == nil,
-			"expected index == nil and generation == nil and value == nil"
-		)
+		local value, generation = pool:tryAcquire()
+		assert(generation == nil and value == nil, "expected generation == nil and value == nil")
 	end
 	assert(
 		created == 3 and #pool.values == 3 and pool:count() == 3,
@@ -91,13 +85,22 @@ test("arbitrary release uses a LIFO free stack and rejects stale/double release"
 	for _ = 1, 3 do
 		pool:tryAcquire()
 	end
-	assert(pool:release(2, 1) and pool:release(1, 1), "expected pool:release(2, 1) and pool:release(1, 1)")
-	assert(not pool:release(1, 1) and resets == 2, "expected not pool:release(1, 1) and resets == 2")
+	assert(
+		pool:release(pool.values[2], 1) and pool:release(pool.values[1], 1),
+		"expected pool:release(pool.values[2], 1) and pool:release(pool.values[1], 1)"
+	)
+	assert(
+		not pool:release(pool.values[1], 1) and resets == 2,
+		"expected not pool:release(pool.values[1], 1) and resets == 2"
+	)
 	local first, firstGeneration = pool:tryAcquire()
 	local second, secondGeneration = pool:tryAcquire()
 	assert(
-		first == 1 and second == 2 and firstGeneration == 2 and secondGeneration == 2,
-		"expected first == 1 and second == 2 and firstGeneration == 2 and secondGeneration == 2"
+		first == pool.values[1]
+			and second == pool.values[2]
+			and firstGeneration == 2
+			and secondGeneration == 2,
+		"expected first == pool.values[1] and second == pool.values[2] and firstGeneration == 2 and secondGeneration == 2"
 	)
 	assert(
 		not pool:release(first, 1) and not pool:isAcquired(first, 1),
@@ -123,20 +126,20 @@ test("reset clears references once and acquisition preserves the same record", f
 		end,
 	})
 	assert(resets == 0, "expected resets == 0")
-	local index, generation, record = pool:tryAcquire()
+	local record, generation = pool:tryAcquire()
 	assert(
 		record.target ~= nil and record.amount == 5,
 		"expected record.target ~= nil and record.amount == 5"
 	)
-	assert(pool:release(index, generation), "expected pool:release(index, generation)")
+	assert(pool:release(record, generation), "expected pool:release(record, generation)")
 	assert(
 		resets == 1 and record.target == nil and record.amount == 0,
 		"expected resets == 1 and record.target == nil and record.amount == 0"
 	)
-	local nextIndex, nextGeneration, nextRecord = pool:tryAcquire()
+	local nextRecord, nextGeneration = pool:tryAcquire()
 	assert(
-		nextIndex == index and nextGeneration ~= generation and nextRecord == record,
-		"expected nextIndex == index and nextGeneration ~= generation and nextRecord == record"
+		nextGeneration ~= generation and nextRecord == record,
+		"expected nextGeneration ~= generation and nextRecord == record"
 	)
 end)
 
@@ -146,21 +149,18 @@ test("without reset payloads retain their contents; false is a valid payload", f
 			return { amount = 5 }
 		end,
 	})
-	local index, generation, record = pool:tryAcquire()
+	local record, generation = pool:tryAcquire()
 	record.amount = 9
-	assert(pool:release(index, generation), "expected pool:release(index, generation)")
-	local _, _, reused = pool:tryAcquire()
+	assert(pool:release(record, generation), "expected pool:release(record, generation)")
+	local reused = pool:tryAcquire()
 	assert(reused.amount == 9, "expected reused.amount == 9")
 	local booleanPool = FixedSlotPool.new(1, {
 		create = function()
 			return false
 		end,
 	})
-	local booleanIndex, booleanGeneration, value = booleanPool:tryAcquire()
-	assert(
-		booleanIndex == 1 and booleanGeneration == 1 and value == false,
-		"expected booleanIndex == 1 and booleanGeneration == 1 and value == false"
-	)
+	local value, booleanGeneration = booleanPool:tryAcquire()
+	assert(booleanGeneration == 1 and value == false, "expected booleanGeneration == 1 and value == false")
 end)
 
 test("clear resets active slots only and old leases cannot release replacements", function()
@@ -180,12 +180,12 @@ test("clear resets active slots only and old leases cannot release replacements"
 	pool:clear()
 	assert(pool:count() == 0 and resets == 3, "expected pool:count() == 0 and resets == 3")
 	for _ = 1, 4 do
-		local index, generation = pool:tryAcquire()
-		assert(index ~= nil, "expected index ~= nil")
-		if index <= 3 then
+		local record, generation = pool:tryAcquire()
+		assert(record ~= nil, "expected record ~= nil")
+		if record <= 3 then
 			assert(
-				generation == 2 and not pool:release(index, 1),
-				"expected generation == 2 and not pool:release(index, 1)"
+				generation == 2 and not pool:release(record, 1),
+				"expected generation == 2 and not pool:release(record, 1)"
 			)
 		end
 	end
@@ -206,18 +206,18 @@ test("reset errors preserve the lease and restore operation availability", funct
 			end
 		end,
 	})
-	local index, generation = pool:tryAcquire()
-	local ok, actualFailure = pcall(pool.release, pool, index, generation)
+	local record, generation = pool:tryAcquire()
+	local ok, actualFailure = pcall(pool.release, pool, record, generation)
 	assert(not ok and actualFailure == failure, "expected not ok and actualFailure == failure")
 	assert(
-		pool:count() == 1 and pool:isAcquired(index, generation),
-		"expected pool:count() == 1 and pool:isAcquired(index, generation)"
+		pool:count() == 1 and pool:isAcquired(record, generation),
+		"expected pool:count() == 1 and pool:isAcquired(record, generation)"
 	)
 	assert(pool:tryAcquire() == nil, "expected pool:tryAcquire() == nil")
 	fail = false
 	assert(
-		pool:release(index, generation) and pool:count() == 0,
-		"expected pool:release(index, generation) and pool:count() == 0"
+		pool:release(record, generation) and pool:count() == 0,
+		"expected pool:release(record, generation) and pool:count() == 0"
 	)
 end)
 
@@ -302,13 +302,9 @@ test("invalid boundaries fail before changing allocation state", function()
 		end,
 	})
 	pool:tryAcquire()
-	for _, index in { 0, 3, 0.5, math.huge, 0 / 0 } do
-		rejects(function()
-			pool:release(index, 1)
-		end)
-		rejects(function()
-			pool:isAcquired(index)
-		end)
+	for _, value in { 0, 3, 0.5, math.huge, 0 / 0 } do
+		assert(not pool:release(value, 1), "foreign values cannot release slots")
+		assert(not pool:isAcquired(value), "foreign values are not acquired")
 	end
 	for _, generation in { 0, -1, 0.5, math.huge, 0 / 0, 9007199254740992 } do
 		rejects(function()
@@ -356,20 +352,28 @@ test("50,000 mixed operations match an independent occupied-slot model", functio
 		if seed % 3 == 0 then
 			local old = oldGenerations[index]
 			if old then
-				assert(not pool:release(index, old), "expected not pool:release(index, old)")
+				assert(
+					not pool:release(pool.values[index], old),
+					"expected not pool:release(pool.values[index], old)"
+				)
 			end
 			local generation = leases[index]
 			if generation then
-				assert(pool:release(index, generation), "expected pool:release(index, generation)")
+				assert(
+					pool:release(pool.values[index], generation),
+					"expected pool:release(pool.values[index], generation)"
+				)
 				oldGenerations[index] = generation
 				leases[index] = nil
 				count -= 1
 			end
 		else
-			local acquiredIndex, generation, record = pool:tryAcquire()
+			local record, generation = pool:tryAcquire()
 			if count == 64 then
-				assert(acquiredIndex == nil, "expected acquiredIndex == nil")
+				assert(record == nil and generation == nil, "expected exhaustion")
 			else
+				assert(record ~= nil, "expected acquired record")
+				local acquiredIndex = record.index
 				assert(
 					acquiredIndex ~= nil and leases[acquiredIndex] == nil,
 					"expected acquiredIndex ~= nil and leases[acquiredIndex] == nil"
@@ -386,14 +390,70 @@ test("50,000 mixed operations match an independent occupied-slot model", functio
 		if step % 100 == 0 then
 			for slot = 1, 64 do
 				assert(
-					pool:isAcquired(slot) == (leases[slot] ~= nil),
-					"expected pool:isAcquired(slot) == (leases[slot] ~= nil)"
+					pool:isAcquired(pool.values[slot]) == (leases[slot] ~= nil),
+					"expected pool:isAcquired(pool.values[slot]) == (leases[slot] ~= nil)"
 				)
 			end
 		end
 	end
 	pool:clear()
 	assert(pool:count() == 0 and created == 64, "expected pool:count() == 0 and created == 64")
+end)
+
+test("record identity is private and generation survives reuse without wrappers", function()
+	local resets = 0
+	local pool = FixedSlotPool.new(1, {
+		create = function()
+			return { amount = 0 }
+		end,
+		reset = function()
+			resets += 1
+		end,
+	})
+	local record, generation = pool:tryAcquire()
+	local foreign = { amount = 0 }
+	assert(not pool:isAcquired(foreign), "foreign record is not owned")
+	assert(not pool:release(foreign, generation), "foreign release must fail")
+	assert(resets == 0, "foreign release must not invoke reset")
+	assert(pool:release(record, generation), "first lease releases")
+	local replacement, replacementGeneration = pool:tryAcquire()
+	assert(rawequal(record, replacement), "acquisition returns the preallocated table itself")
+	assert(not pool:release(record, generation), "old scalar token cannot release replacement")
+	assert(pool:isAcquired(replacement, replacementGeneration), "replacement remains live")
+	local keys = 0
+	for key in record do
+		assert(key == "amount", "pool metadata must not be injected into payload")
+		keys += 1
+	end
+	assert(keys == 1 and resets == 1, "payload shape and reset count remain unchanged")
+end)
+
+test("constructor rejects ambiguous duplicate values and NaN", function()
+	local same = {}
+	for _, value in { same, false, 7, "same" } do
+		rejects(function()
+			FixedSlotPool.new(2, {
+				create = function()
+					return value
+				end,
+			})
+		end)
+	end
+	rejects(function()
+		FixedSlotPool.new(1, {
+			create = function()
+				return 0 / 0
+			end,
+		})
+	end)
+	local frozen = table.freeze({ amount = 1 })
+	local pool = FixedSlotPool.new(1, {
+		create = function()
+			return frozen
+		end,
+	})
+	local record, generation = pool:tryAcquire()
+	assert(record == frozen and pool:release(record, generation), "frozen payloads need no metadata writes")
 end)
 
 print(tostring(passed) .. " fixed-slot pool test groups passed")

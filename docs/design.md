@@ -11,9 +11,18 @@ The free stack is represented by slot indices. `_freeHead == 0` means full. For 
 terminates the stack). `_generations[index]` increases when that slot is acquired again.
 No duplicate Boolean occupancy array or per-slot wrapper is needed.
 
-- Construction: O(capacity), fills all three arrays and creates every payload.
+`_indices[value]` privately resolves a payload to its slot. The constructor fills this map
+once, rejecting duplicate values and NaN; table keys use reference identity. Public calls
+return the original payload and a separate numeric generation token. They never allocate
+a lease object or inject metadata into payloads. `release(record, generation)` rejects an
+unknown record, free slot or stale token without resetting anything. Holding an old record
+reference cannot release a new acquisition with its old token, but direct stale writes are
+still the caller's responsibility. Scalars must be unique within the pool, and tokens remain
+pool-local. The public indexed `values` array remains available for bounded iteration.
+
+- Construction: O(capacity), fills all three arrays and the identity lookup, and creates every payload.
 - Acquire: O(1), pops a free index, increments its generation, marks it acquired.
-- Release: O(1) excluding the caller's reset work, validates the generation, resets,
+- Release: O(1) excluding the caller's reset work, looks up the record, validates its generation, resets,
   then pushes the slot back. Stale and double releases do no reset work.
 - Clear: O(capacity) plus reset work. Does not rebuild arrays or reset generations.
 - Overflow: returns nil without modifying a live slot or allocating extra capacity.
@@ -29,7 +38,7 @@ Allocator mutation is rejected while reset executes. Errors restore that guard a
 the original acquisition. Callbacks must not yield. External cleanup and partial payload
 mutations are the callback owner's responsibility, including retry safety.
 
-For future recoil integration, retain `(index, generation)` for each active shot, mutate its
+For future recoil integration, retain `(record, generation)` for each active shot, mutate its
 payload in place and release expired slots. If full, recoil may select a victim, cancel its
 remaining curve/bookkeeping, release its current acquisition and acquire the reusable slot.
 Preserve delivered aggregate recovery; do not charge undelivered future kick to recovery.

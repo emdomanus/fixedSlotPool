@@ -15,13 +15,6 @@ type FixedSlotPoolModule = {
 local ACQUIRED = -1
 local MAX_GENERATION = 9007199254740991
 
-local function validateIndex(index: number, capacity: number): ()
-	assert(
-		index >= 1 and index <= capacity and index % 1 == 0,
-		"slot index must be an integer within capacity"
-	)
-end
-
 local function validateGeneration(generation: number): ()
 	assert(
 		generation >= 1 and generation <= MAX_GENERATION and generation % 1 == 0,
@@ -47,17 +40,22 @@ function FixedSlotPool.new<T>(capacity: number, options: FixedSlotPoolOptions<T>
 	assert(type(options.create) == "function", "create must be a function")
 	assert(options.reset == nil or type(options.reset) == "function", "reset must be a function or nil")
 	local values: { T } = table.create(capacity)
+	local indices: { [T]: number } = {}
 	local nextFree: { number } = table.create(capacity, 0)
 	local generations: { number } = table.create(capacity, 0)
 	for index = 1, capacity do
 		local value = options.create(index)
 		assert(value ~= nil, "create must return a non-nil payload")
+		assert(value == value, "create must not return NaN")
+		assert(indices[value] == nil, "create must return a unique payload for every slot")
+		indices[value] = index
 		values[index] = value
 		nextFree[index] = if index < capacity then index + 1 else 0
 	end
 	local self: FixedSlotPoolImpl<T> = setmetatable({
 		values = table.freeze(values),
 		capacity = capacity,
+		_indices = indices,
 		_nextFree = nextFree,
 		_generations = generations,
 		_freeHead = 1,
@@ -68,11 +66,11 @@ function FixedSlotPool.new<T>(capacity: number, options: FixedSlotPoolOptions<T>
 	return self
 end
 
-function FixedSlotPool.tryAcquire<T>(self: FixedSlotPoolImpl<T>): (number?, number?, T?)
+function FixedSlotPool.tryAcquire<T>(self: FixedSlotPoolImpl<T>): (T?, number?)
 	assert(not self._resetting, "cannot mutate a pool from its reset callback")
 	local index = self._freeHead
 	if index == 0 then
-		return nil, nil, nil
+		return nil, nil
 	end
 	local generation = self._generations[index]
 	assert(generation < MAX_GENERATION, "slot generation exhausted; construct a new pool")
@@ -81,13 +79,16 @@ function FixedSlotPool.tryAcquire<T>(self: FixedSlotPoolImpl<T>): (number?, numb
 	self._nextFree[index] = ACQUIRED
 	self._generations[index] = generation
 	self._activeCount += 1
-	return index, generation, self.values[index]
+	return self.values[index], generation
 end
 
-function FixedSlotPool.release<T>(self: FixedSlotPoolImpl<T>, index: number, generation: number): boolean
+function FixedSlotPool.release<T>(self: FixedSlotPoolImpl<T>, value: T, generation: number): boolean
 	assert(not self._resetting, "cannot mutate a pool from its reset callback")
-	validateIndex(index, self.capacity)
 	validateGeneration(generation)
+	local index = self._indices[value]
+	if index == nil then
+		return false
+	end
 	if self._nextFree[index] ~= ACQUIRED or self._generations[index] ~= generation then
 		return false
 	end
@@ -106,12 +107,14 @@ function FixedSlotPool.release<T>(self: FixedSlotPoolImpl<T>, index: number, gen
 	return true
 end
 
-function FixedSlotPool.isAcquired<T>(self: FixedSlotPoolImpl<T>, index: number, generation: number?): boolean
-	validateIndex(index, self.capacity)
+function FixedSlotPool.isAcquired<T>(self: FixedSlotPoolImpl<T>, value: T, generation: number?): boolean
 	if generation ~= nil then
 		validateGeneration(generation)
 	end
-	return self._nextFree[index] == ACQUIRED and (generation == nil or self._generations[index] == generation)
+	local index = self._indices[value]
+	return index ~= nil
+		and self._nextFree[index] == ACQUIRED
+		and (generation == nil or self._generations[index] == generation)
 end
 
 function FixedSlotPool.count<T>(self: FixedSlotPoolImpl<T>): number
@@ -122,7 +125,7 @@ function FixedSlotPool.clear<T>(self: FixedSlotPoolImpl<T>): ()
 	assert(not self._resetting, "cannot mutate a pool from its reset callback")
 	for index = 1, self.capacity do
 		if self._nextFree[index] == ACQUIRED then
-			self:release(index, self._generations[index])
+			self:release(self.values[index], self._generations[index])
 		end
 	end
 end
