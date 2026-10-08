@@ -1,0 +1,13 @@
+{
+  "name": "fixedSlotPool-dev",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "$className": "ReplicatedStorage",
+      "packages": {
+        "$className": "Folder",
+        "fixedSlotPool": { "$path": "src" }
+      }
+    }
+  }
+}

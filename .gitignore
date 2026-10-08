@@ -1,0 +1,9 @@
+.verification/
+.lune-runtimes/
+sourcemap.json
+roblox_packages/
+.pesde/
+scripts/luau-lsp/globalTypes.d.luau
+*.rbxm
+*.rbxmx
+*.tar.gz

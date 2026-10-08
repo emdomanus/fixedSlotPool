@@ -1,0 +1,7 @@
+[tools]
+selene = "Kampfkarren/selene@0.31.0"
+lune = "lune-org/lune@0.10.5"
+rojo = "rojo-rbx/rojo@7.7.1"
+luau-lsp = "JohnnyMorganz/luau-lsp@1.70.1"
+stylua = "JohnnyMorganz/StyLua@2.1.0"
+pesde = "pesde-pkg/pesde@0.7.4+registry.0.2.3"

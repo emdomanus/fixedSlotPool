@@ -1,0 +1,13 @@
+name = "emdomanus/fixed_slot_pool"
+version = "0.1.0"
+description = "Fixed-capacity reusable payload slots with generation-checked release."
+private = true
+includes = ["pesde.toml", "README.md", "docs/**/*.md", "src/**/*.luau"]
+
+[target]
+environment = "roblox"
+lib = "src/init.luau"
+build_files = ["src"]
+
+[indices]
+default = "https://github.com/pesde-pkg/index"
